@@ -8,6 +8,7 @@ import {
   seedDatabase,
   seedUserId,
 } from '../src/scripts/seed';
+import { ERROR_CODE } from '../src/constants';
 
 const UNKNOWN_ID = '00000000-0000-4000-8000-000000000999';
 
@@ -110,7 +111,7 @@ describe('registration API', () => {
 
     expect(first.status).toBe(201);
     expect(second.status).toBe(409);
-    expect(second.body.error.code).toBe('EVENT_FULL');
+    expect(second.body.error.code).toBe(ERROR_CODE.EVENT_FULL);
     expect(await Registration.count()).toBe(1);
   });
 
@@ -120,7 +121,7 @@ describe('registration API', () => {
       .send({ userId: seedUserId(1) });
 
     expect(response.status).toBe(404);
-    expect(response.body.error.code).toBe('EVENT_NOT_FOUND');
+    expect(response.body.error.code).toBe(ERROR_CODE.EVENT_NOT_FOUND);
   });
 
   it('returns 404 for an unknown user', async () => {
@@ -129,6 +130,59 @@ describe('registration API', () => {
       .send({ userId: UNKNOWN_ID });
 
     expect(response.status).toBe(404);
-    expect(response.body.error.code).toBe('USER_NOT_FOUND');
+    expect(response.body.error.code).toBe(ERROR_CODE.USER_NOT_FOUND);
+  });
+
+  it('creates a correct amount of registretions for capacity=1', async () => {
+    const eventId = SEED_EVENT_IDS.singleSeat;
+    const userIds = Array.from({ length: 20 }, (_, i) => seedUserId(i + 1));
+
+    const responses = await Promise.all(
+        userIds.map((userId) => request(app)
+          .post(`/events/${eventId}/registrations`)
+          .send({ userId }),
+        )
+    );
+
+    const created = responses.filter((r) => r.status === 201);
+    const conflicts = responses.filter((r) => r.status === 409);
+
+    expect(created).toHaveLength(1);
+    expect(conflicts).toHaveLength(19);
+
+    for (const r of conflicts) {
+        expect(r.body.error.code).toBe(ERROR_CODE.EVENT_FULL);
+    }
+
+    const total = await Registration.count({ where: { eventId } });
+    expect(total).toBe(1);
+  });
+  
+  it('creates a correct amount of registrations for capacity=10', async () => {
+    const eventId = SEED_EVENT_IDS.main;
+    const userIds = Array.from({ length: 25 }, (_, i) => seedUserId(i + 1));
+
+    const responses = await Promise.all(
+      userIds.map((userId) => 
+        request(app)
+          .post(`/events/${eventId}/registrations`)
+          .send({ userId }),
+      )
+    );
+
+    const created = responses.filter((r) => r.status === 201);
+    const conflicts = responses.filter((r) => r.status === 409);
+    const serverErrors = responses.filter((r) => r.status >= 500);
+
+    expect(serverErrors).toHaveLength(0);
+    expect(created).toHaveLength(10);
+    expect(conflicts).toHaveLength(15);
+
+    for (const r of conflicts) {
+        expect(r.body.error.code).toBe(ERROR_CODE.EVENT_FULL);
+    }
+
+    const total = await Registration.count({ where: { eventId } });
+    expect(total).toBe(10);
   });
 });

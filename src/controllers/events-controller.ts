@@ -1,6 +1,7 @@
 import { NextFunction, Request, Response } from 'express';
-import { Event, Registration } from '../models';
+import { Event, Registration, sequelize } from '../models';
 import { presentOldEvent } from '../legacy/event-presenter';
+import { ERROR_CODE, ERROR_MESSAGE } from '../constants';
 
 export async function listEvents(
   _req: Request,
@@ -8,18 +9,29 @@ export async function listEvents(
   next: NextFunction,
 ): Promise<void> {
   try {
-    const allEvents = await Event.findAll({ order: [['title', 'ASC']] });
+    const events = await Event.findAll({
+      attributes: {
+        include: [
+          [
+            sequelize.fn(
+                'COUNT',
+                sequelize.col('registrations.id'),
+            ),
+            'peopleAlreadyIn',
+          ],
+        ],
+      },
+      include: [
+        { model: Registration, as: 'registrations', attributes: [] },
+      ],
+      group: ['Event.id'],
+      order: [['title', 'ASC']],
+    });
 
-    // This intentionally uses the old presenter and one count per event.
-    const result = await Promise.all(
-      allEvents.map(async (event) => {
-        const peopleAlreadyIn = await Registration.count({
-          where: { eventId: event.id },
-        });
-
-        return presentOldEvent(event, peopleAlreadyIn);
-      }),
-    );
+    const result = events.map((event) => {
+      const peopleAlreadyIn = Number(event.get('peopleAlreadyIn'));
+      return presentOldEvent(event, peopleAlreadyIn);
+    });
 
     res.json({ events: result });
   } catch (error) {
@@ -38,7 +50,10 @@ export async function getEvent(
 
     if (!event) {
       res.status(404).json({
-        error: { code: 'EVENT_NOT_FOUND', message: 'Event was not found' },
+        error: {
+          code: ERROR_CODE.EVENT_NOT_FOUND,
+          message: ERROR_MESSAGE.EVENT_NOT_FOUND,
+        },
       });
       return;
     }

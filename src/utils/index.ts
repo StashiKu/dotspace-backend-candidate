@@ -1,0 +1,1 @@
+export { codedError } from "./error";
